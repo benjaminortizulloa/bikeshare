@@ -204,6 +204,8 @@ dc_routes_data <- dplyr::left_join(dc_routes2, dc_routes3)
   
 sf::st_write(dc_routes_data,'data/2017-2019_routes_summary_dc_final.gpkg')
 
+dc_routes_data <- sf::st_read('data/2017-2019_routes_summary_dc_final.gpkg')
+
 features_month <-dc_routes_data %>%
   # dplyr::filter(!is.na(distance)) %>%
   dplyr::filter(month == 1) 
@@ -231,7 +233,7 @@ final_features <- feature_intersect %>%
 
 sf::st_write(final_features, 'data/dc_summary_1.geojson')
 
-purrr::map(2:12, function(x){
+purrr::map(6:12, function(x){
   print(paste0('started', x))
   features_month <-dc_routes_data %>%
     # dplyr::filter(!is.na(distance)) %>%
@@ -262,3 +264,4 @@ purrr::map(2:12, function(x){
   sf::st_write(final_features, filename)
   print(paste0('finished', x))
 })
+
