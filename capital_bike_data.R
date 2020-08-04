@@ -138,6 +138,7 @@ non_geo_summary <- dc_geo_summary_filter %>%
   tidyr::nest()
 
 readr::write_rds(non_geo_summary, 'data/2017-2019_DC_OD_summary.rds')
+non_geo_summary <- readr::read_rds('data/2017-2019_DC_OD_summary.rds')
 
 docks2 <- docks %>% 
   sf::st_as_sf(coords = c('long', 'lat'), crs = 4326) %>%
@@ -180,28 +181,84 @@ dc_bound <- sf::st_read('data/Washington_DC_Boundary-shp/Washington_DC_Boundary.
 dc_routes <- route_key %>%
   dplyr::filter(sf::st_within(., dc_bound, sparse = F))
 
-dc_routes$keep <- T
-st_geometry(dc_routes) <- NULL
+dc_routes2 <- dc_routes %>%
+  dplyr::group_by(origin, destination) %>%
+  dplyr::count() %>%
+  dplyr::select(-n)
 
-dc_routes_data <- dplyr::inner_join(geo_sum, dplyr::distinct(dc_routes))
   
-sf::st_write(dc_routes_data,'data/2017-2019_routes_summary_DC.gpkg')
+# dc_routes$keep <- T
+# st_geometry(dc_routes) <- NULL
+# dc_routes <- dplyr::distinct(dc_routes) %>%
+#   dplyr::mutate(org_dest = paste0(origin, '_', destination))
+
+dc_routes3 <- geo_sum %>%
+  sf::st_set_geometry(NULL) %>%
+  # dplyr::mutate(org_dest = paste0(origin, '_', destination)) %>%
+  # dplyr::filter(org_dest %in% dc_routes$org_dest) %>%
+  # dplyr::inner_join(geo_sum, dplyr::distinct(dc_routes)) %>%
+  dplyr::select(origin, destination, month, tot_time, tot_trips, instances, id) %>%
+  dplyr::distinct()
+
+dc_routes_data <- dplyr::left_join(dc_routes2, dc_routes3)
+  
+sf::st_write(dc_routes_data,'data/2017-2019_routes_summary_dc_final.gpkg')
 
 features_month <-dc_routes_data %>%
   # dplyr::filter(!is.na(distance)) %>%
   dplyr::filter(month == 1) 
 
 feature_intersect <- features_month %>%
-  sf::st_intersection()
+  sf::st_intersection() %>% 
+  sf::st_collection_extract('LINESTRING')
 
 for (int in seq_along(feature_intersect$id)) {
-  feature_intersect$trip_cut[int] = max(features_month[feature_intersect$origins[[int]], ]$trip_cut, na.rm = TRUE)
-  feature_intersect$trip_cut_no[int] = max(features_month[feature_intersect$origins[[int]], ]$trip_cut_no, na.rm = TRUE)
+  feature_intersect[int,]$tot_trips <- sum(features_month[feature_intersect$origins[[int]], ]$tot_trips, na.rm = T)
+  feature_intersect[int,]$tot_time <- sum(features_month[feature_intersect$origins[[int]], ]$tot_time, na.rm = T)
+  feature_intersect[int,]$instances <- sum(features_month[feature_intersect$origins[[int]], ]$instances, na.rm = T)
 }
 
-single_lines <- test_intersect %>% st_collection_extract('LINESTRING')
+final_features <- feature_intersect %>%
+  dplyr::ungroup() %>%
+  dplyr::select(month, tot_time, tot_trips, instances) %>%
+  dplyr::mutate(ave_time = tot_time/instances, ave_trips = tot_trips/instances) %>%
+  dplyr::mutate(trip_cut = cut(ave_trips, breaks = 5) %>% as.numeric(),
+                trip_cut_no = ggplot2::cut_number(ave_trips, n = 5) %>% as.numeric() )
+# feature_intersect <- feature_intersect %>% st_collection_extract('LINESTRING')
 
-dc_single_lines <- single_lines %>%
-  filter(st_within(., dc_bound, sparse = F))
+# dc_single_lines <- single_lines %>%
+#   filter(st_within(., dc_bound, sparse = F))
 
-sf::st_write(dc_single_lines, 'data/dc_january.geojson')
+sf::st_write(final_features, 'data/dc_summary_1.geojson')
+
+purrr::map(2:12, function(x){
+  print(paste0('started', x))
+  features_month <-dc_routes_data %>%
+    # dplyr::filter(!is.na(distance)) %>%
+    dplyr::filter(month == x) 
+  
+  feature_intersect <- features_month %>%
+    sf::st_intersection() %>% 
+    sf::st_collection_extract('LINESTRING')
+  
+  for (int in seq_along(feature_intersect$id)) {
+    feature_intersect[int,]$tot_trips <- sum(features_month[feature_intersect$origins[[int]], ]$tot_trips, na.rm = T)
+    feature_intersect[int,]$tot_time <- sum(features_month[feature_intersect$origins[[int]], ]$tot_time, na.rm = T)
+    feature_intersect[int,]$instances <- sum(features_month[feature_intersect$origins[[int]], ]$instances, na.rm = T)
+  }
+  
+  final_features <- feature_intersect %>%
+    dplyr::ungroup() %>%
+    dplyr::select(month, tot_time, tot_trips, instances) %>%
+    dplyr::mutate(ave_time = tot_time/instances, ave_trips = tot_trips/instances) %>%
+    dplyr::mutate(trip_cut = cut(ave_trips, breaks = 5) %>% as.numeric(),
+                  trip_cut_no = ggplot2::cut_number(ave_trips, n = 5) %>% as.numeric() )
+  # feature_intersect <- feature_intersect %>% st_collection_extract('LINESTRING')
+  
+  # dc_single_lines <- single_lines %>%
+  #   filter(st_within(., dc_bound, sparse = F))
+  
+  filename <- paste0('data/dc_summary_', x, '.geojson')
+  sf::st_write(final_features, filename)
+  print(paste0('finished', x))
+})
